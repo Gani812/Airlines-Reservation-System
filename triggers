@@ -1,0 +1,64 @@
+#TRIGGERS
+
+--  Block booking if seat already booked
+DELIMITER //
+CREATE TRIGGER prevent_double_booking
+BEFORE INSERT ON Bookings
+FOR EACH ROW
+BEGIN
+  DECLARE seat_status VARCHAR(10);
+  SELECT status INTO seat_status 
+  FROM Seats 
+  WHERE flight_id = NEW.flight_id AND seat_no = NEW.seat_no;
+
+  IF seat_status = 'booked' THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Seat already booked!';
+  END IF;
+END;
+//
+DELIMITER ;
+
+-- Update seat status after booking
+DELIMITER //
+CREATE TRIGGER update_seat_on_booking
+AFTER INSERT ON Bookings
+FOR EACH ROW
+BEGIN
+  UPDATE Seats 
+  SET status = 'booked'
+  WHERE flight_id = NEW.flight_id AND seat_no = NEW.seat_no;
+END;
+//
+DELIMITER ;
+
+
+--  Release seat on cancellation
+DELIMITER //
+CREATE TRIGGER release_seat_on_cancellation
+AFTER UPDATE ON Bookings
+FOR EACH ROW
+BEGIN
+  IF NEW.status = 'cancelled' THEN
+    UPDATE Seats 
+    SET status = 'available'
+    WHERE flight_id = NEW.flight_id AND seat_no = NEW.seat_no;
+  END IF;
+END;
+//
+DELIMITER ;
+
+
+-- Booking Summary View
+CREATE VIEW booking_summary AS
+SELECT 
+    F.flight_id,
+    F.source,
+    F.destination,
+    COUNT(B.booking_id) AS total_bookings,
+    SUM(CASE WHEN B.status = 'cancelled' THEN 1 ELSE 0 END) AS cancellations,
+    ROUND(COUNT(B.booking_id) / COUNT(S.seat_no) * 100, 2) AS occupancy_rate_percent
+FROM Flights F
+JOIN Seats S ON F.flight_id = S.flight_id
+LEFT JOIN Bookings B ON F.flight_id = B.flight_id AND S.seat_no = B.seat_no
+GROUP BY F.flight_id, F.source, F.destination;
